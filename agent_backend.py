@@ -15,6 +15,7 @@ from langchain_core.messages import SystemMessage # Message for providing instru
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
+from langchain_community.tools import DuckDuckGoSearchRun
 
 
 from langchain_core.tools import tool
@@ -120,14 +121,20 @@ def log_tokens(ai_message):
 def file_reader(csv_df: str) -> str:
     """Reads dataset formats (csv, json, xlsx, parquet, sql, xml) and profiles structural metrics."""
     try:
-        name, ext = os.path.splitext(csv_df)
+        _, ext = os.path.splitext(csv_df)
         ext = ext.lower()
         if ext == ".csv": panda_df = pd.read_csv(csv_df)
-        elif ext == ".json": panda_df = pd.read_json(csv_df)
+        elif ext == ".json": 
+            try: 
+                panda_df = pd.read_json(csv_df)
+            except ValueError:
+                panda_df = pd.read_json(csv_df, lines = True)
+
         elif ext == ".xlsx": panda_df = pd.read_excel(csv_df, engine='openpyxl')
         elif ext == ".parquet": panda_df = pd.read_parquet(csv_df)
         else: return f"Unsupported file extension format: {ext}"
         
+
         # Hydrate the global dictionary environment contexts immediately on read
         notebook_env['df'] = panda_df
         notebook_env['active_file_path'] = csv_df
@@ -189,7 +196,21 @@ def code_executor(python_code: str) -> str:
         sys.stdout = old_stdout
         return f"Error executing code: {str(e)}"
 
-tools = [file_reader, code_executor]
+
+search_engine = DuckDuckGoSearchRun()
+@tool
+def websearch_tool(query: str):
+    """Queries the live internet to discover creative data engineering ideas, industry formulas, 
+    external domain knowledge, or feature engineering inspiration based on real-world trends."""
+    try:
+        result = search_engine.run(query)
+        return f"websearch result for query {query}. Result: {result}"
+    except Exception as e:
+        return f"websearch tool was interrupted"
+
+feature_tools = [websearch_tool, file_reader, code_executor] # for feature engineering agent only
+
+tools = [file_reader, code_executor] # for base model
 
 # ==========================================
 # SUBORDINATE EMPLOYEE WORKER AGENTS
@@ -225,6 +246,27 @@ analysis_agent = create_react_agent(
     checkpointer= memory,
 )
 
+data_eng_sys_prompt = (
+    "You are a specialized Data Engineering Agent with live access to the internet.\n\n"
+    "CRUCIAL FEATURE ENGINEERING & SEARCH INSTRUCTIONS:\n"
+    "1. Always start by calling 'file_reader' on the file path string provided by the Director.\n"
+    "2. LIVE RESEARCH STEP: If you need creative, advanced, or domain-specific ideas for new columns, you MUST call 'web_search_tool' "
+    "to lookup real-world trends, feature engineering formulas, or creative techniques relevant to the columns in the dataset.\n"
+    "3. MANDATORY ISOLATION RULE: You must NEVER overwrite or modify the original file or the original df variable.\n"
+    "4. Create an explicit copy of the dataframe in your Python code using .copy() (e.g., df_eng = df.copy()).\n"
+    "5. Use 'code_executor' to implement the creative features you discovered on the web (e.g., extracting seasonality, calculating economic indexes, interaction flags).\n"
+    "6. Save the final feature-engineered copy to a brand-new file named 'engineered_features.csv' via code execution.\n"
+    "7. Summarize the creative ideas you researched and implemented for the Director."
+)
+
+feature_eng_agent = create_react_agent(
+    model = llm,
+    tools = feature_tools,
+    prompt = data_eng_sys_prompt,
+    checkpointer= memory
+)
+
+
 @tool
 def cleaner_tool(task_description: str, config: RunnableConfig):
     """Use this tool when a dataset is messy, unformatted, contains corrupted text values, 
@@ -254,20 +296,35 @@ def analysis_tool(task_description: str, config: RunnableConfig):
     text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
     return text_outputs[-1] if text_outputs else "Data analysis process completed successfully."
 
-director_tools = [cleaner_tool, analysis_tool]
+@tool
+def feature_eng_tool(task_description: str, config: RunnableConfig):
+    """Use this tool when you need to research real-world ideas online and generate new creative columns, 
+    mathematical features, or data attributes based on existing columns without modifying the original source file."""
+    # Isolate the worker's memory thread so it doesn't corrupt the Director's memory
+    parent_thread = config["configurable"].get("thread_id", "default_thread")
+    sub_config = {"configurable": {"thread_id": f"{parent_thread}_analyst"}}
+    
+    response = feature_eng_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
+    messages = response.get('messages', [])
+    text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
+    return text_outputs[-1] if text_outputs else "=Feature engineering process completed successfully."
+
+director_tools = [cleaner_tool, analysis_tool, feature_eng_tool]
 
 # ==========================================
 # ORCHESTRATOR DIRECTOR WORKFLOW CONTEXT
 # ==========================================
 
 director_prompt = (
-    "You are the Director of a Data Analytics team. You do not touch files or write code directly.\n"
-    "Your job is to coordinate your employees: the 'cleaner_tool' and the 'analysis_tool'.\n\n"
+    "You are the Director of an Advanced Data Analytics team. You coordinate the 'cleaner_tool', the 'data_engineering_tool', and the 'analysis_tool'.\n\n"
     "Your Workflow:\n"
-    "1. When a user gives you a file, ALWAYS send it to the cleaner tool first. You MUST explicitly state the file name to the cleaner.\n"
-    "2. Once the cleaner tool finishes cleaning, deploy the analysis tool. You MUST pass the EXACT file name AND the user's specific analytical question into the analysis tool's task description.\n"
-    "3. Review their work and present the ultimate final breakdown report back to the user with exact numbers."
-) 
+    "1. When a user hands you a file, ALWAYS send it to the 'cleaner_tool' first to guarantee formatting is fixed on disk.\n"
+    "2. If the user wants new, creative, or innovative metrics, pass the cleaned file name to the 'data_engineering_tool'. "
+    "Explicitly instruct it to use its web search capability to look up creative domain features online, apply them to a copy, and export 'engineered_features.csv'.\n"
+    "3. Route the resulting file context ('engineered_features.csv') to the 'analysis_tool' to extract your final insights or charts.\n"
+    "4. Present the creative ideas found on the web and the final mathematical reports cleanly back to the user."
+)
+
 def message_sliding_window_hook(state: dict) -> dict:
     """
     Intercepts the state right before the LLM node processes it.
@@ -304,6 +361,7 @@ director_agent_fallback = create_react_agent(
     pre_model_hook=message_sliding_window_hook, 
     checkpointer=memory
 )
+
 
 pd.DataFrame({
     'Property_ID': [101, 102, 103, 104],
