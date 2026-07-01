@@ -15,6 +15,7 @@ from langchain_core.messages import SystemMessage # Message for providing instru
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
+from langchain_community.tools import DuckDuckGoSearchRun
 
 
 from langchain_core.tools import tool
@@ -120,14 +121,20 @@ def log_tokens(ai_message):
 def file_reader(csv_df: str) -> str:
     """Reads dataset formats (csv, json, xlsx, parquet, sql, xml) and profiles structural metrics."""
     try:
-        name, ext = os.path.splitext(csv_df)
+        _, ext = os.path.splitext(csv_df)
         ext = ext.lower()
         if ext == ".csv": panda_df = pd.read_csv(csv_df)
-        elif ext == ".json": panda_df = pd.read_json(csv_df)
+        elif ext == ".json": 
+            try: 
+                panda_df = pd.read_json(csv_df)
+            except ValueError:
+                panda_df = pd.read_json(csv_df, lines = True)
+
         elif ext == ".xlsx": panda_df = pd.read_excel(csv_df, engine='openpyxl')
         elif ext == ".parquet": panda_df = pd.read_parquet(csv_df)
         else: return f"Unsupported file extension format: {ext}"
         
+
         # Hydrate the global dictionary environment contexts immediately on read
         notebook_env['df'] = panda_df
         notebook_env['active_file_path'] = csv_df
@@ -189,7 +196,21 @@ def code_executor(python_code: str) -> str:
         sys.stdout = old_stdout
         return f"Error executing code: {str(e)}"
 
-tools = [file_reader, code_executor]
+
+search_engine = DuckDuckGoSearchRun()
+@tool
+def websearch_tool(query: str):
+    """Queries the live internet to discover creative data engineering ideas, industry formulas, 
+    external domain knowledge, or feature engineering inspiration based on real-world trends."""
+    try:
+        result = search_engine.run(query)
+        return f"websearch result for query {query}. Result: {result}"
+    except Exception as e:
+        return f"websearch tool was interrupted"
+
+feature_tools = [websearch_tool, file_reader, code_executor] # for feature engineering agent only
+
+tools = [file_reader, code_executor] # for base model
 
 # ==========================================
 # SUBORDINATE EMPLOYEE WORKER AGENTS
@@ -199,22 +220,26 @@ memory = InMemorySaver()
 llm = ChatOpenAI(model= model_name, temperature=0)
 
 cleaner_sys_prompt = (
-    "You are a specialized Data Cleaning Agent. Your only task is to fix data files using code.\n\n"
-    "CRUCIAL INSTRUCTIONS:\n"
+    "You are a specialized Data Cleaning Worker. Your only task is to fix data files using code.\n\n"
+    "STRICT EXECUTION RULES:\n"
     "1. Read the file path using 'file_reader'.\n"
-    "2. Write code with 'code_executor' to fix text patterns in columns (e.g. strip '$', '₹', 'per sqft', commas).\n"
-    "3. Apply `.str.strip()` to categorical text strings to resolve whitespace formatting issues.\n"
-    "4. When your cleaning modifications run successfully via code execution, stop and summarize exactly what changes you applied. Do not loop endlessly."
+    "2. **CRUCIAL - STRICT COMPLIANCE**: You must ONLY execute the exact cleaning tasks explicitly requested in the user prompt. "
+    "Do NOT add extra cleaning steps, do NOT drop missing values, do NOT strip whitespace, and do NOT change casing UNLESS explicitly asked to do so.\n"
+    "3. Write and execute code with 'code_executor' to fix ONLY the targeted formatting issues.\n"
+    "4. IMMEDIATELY AFTER your precise code executes successfully, you MUST STOP. Do not call any more tools.\n"
+    "5. Respond with a short text message starting with 'CLEANING COMPLETE:' followed by a summary of what you did."
 )
 cleaner_agent = create_react_agent(model=llm, tools=tools, prompt=cleaner_sys_prompt, checkpointer=memory)
 
 analysis_sys_prompt = (
-    "You are an expert Data Analyst Agent. Your task is to calculate insights from clean files.\n\n"
-    "CRUCIAL INSTRUCTIONS:\n"
-    "1. Read the active file using 'file_reader'.\n"
-    "2. Run mathematical aggregations or groupby calculations via 'code_executor'.\n"
-    "3. EXPLICIT REQUIREMENT: You must print your specific mathematical results (e.g., use `print(highest_month)`) inside the python code so it captures in the terminal output.\n"
-    "4. Stop immediately after returning your final data observations. Explicitly include the exact names, values, and numbers in your final message."
+    "You are a specialized Data Analysis Worker. Your only task is to calculate insights from clean files.\n\n"
+    "STRICT EXECUTION RULES:\n"
+    "1. Read the file path using 'file_reader'.\n"
+    "2. **CRUCIAL - STRICT COMPLIANCE**: Calculate ONLY the explicit metrics, questions, or charts requested by the user. "
+    "Do NOT generate an entire statistical summary of the dataframe or unrelated groupby tables if the user only asked a single targeted question.\n"
+    "3. Run mathematical calculations or plots via 'code_executor' matching the user's request exactly.\n"
+    "4. IMMEDIATELY AFTER your code executes successfully, you MUST STOP.\n"
+    "5. Respond with a final text message starting with 'ANALYSIS COMPLETE:' followed by your precise findings."
 )
 
 
@@ -224,6 +249,25 @@ analysis_agent = create_react_agent(
     prompt = analysis_sys_prompt,
     checkpointer= memory,
 )
+
+data_eng_sys_prompt = (
+    "You are a specialized Data Engineering Agent with live access to the internet.\n\n"
+    "STRICT EXECUTION RULES:\n"
+    "1. Read the file path using 'file_reader'.\n"
+    "2. **CRUCIAL - STRICT COMPLIANCE**: You must ONLY create new features, columns, or formulas if the user's prompt explicitly asks you to. "
+    "If the user did not ask for feature generation, simply return 'No engineering requested' and exit immediately without modifying anything.\n"
+    "3. If (and only if) requested, create an explicit copy of the dataframe using `.copy()` and use 'code_executor' to build the requested features.\n"
+    "4. If requested to be creative or find real-world trends, use the 'web_search_tool' to look up relevant formulas.\n"
+    "5. Save the final copy to 'engineered_features.csv' and stop immediately. Do not add unsolicited extra columns."
+)
+
+feature_eng_agent = create_react_agent(
+    model = llm,
+    tools = feature_tools,
+    prompt = data_eng_sys_prompt,
+    checkpointer= memory
+)
+
 
 @tool
 def cleaner_tool(task_description: str, config: RunnableConfig):
@@ -236,9 +280,13 @@ def cleaner_tool(task_description: str, config: RunnableConfig):
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_cleaner"}}
     
     response = cleaner_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
-    messages = response.get('messages', [])
-    text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
-    return text_outputs[-1] if text_outputs else "Data cleaning process completed successfully."
+    
+    # Securely crawl backward through the messages to find the worker's true final textual response
+    for msg in reversed(response.get('messages', [])):
+        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            return str(msg.content)
+            
+    return "Data cleaning completed successfully on disk."
 
 @tool
 def analysis_tool(task_description: str, config: RunnableConfig):
@@ -250,24 +298,43 @@ def analysis_tool(task_description: str, config: RunnableConfig):
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_analyst"}}
     
     response = analysis_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
+    # Securely crawl backward through the messages to find the worker's true final textual response
+    for msg in reversed(response.get('messages', [])):
+        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            return str(msg.content)
+            
+    return "Data analysis completed successfully on disk."
+
+@tool
+def feature_eng_tool(task_description: str, config: RunnableConfig):
+    """Use this tool when you need to research real-world ideas online and generate new creative columns, 
+    mathematical features, or data attributes based on existing columns without modifying the original source file."""
+    # Isolate the worker's memory thread so it doesn't corrupt the Director's memory
+    parent_thread = config["configurable"].get("thread_id", "default_thread")
+    sub_config = {"configurable": {"thread_id": f"{parent_thread}_analyst"}}
+    
+    response = feature_eng_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
     messages = response.get('messages', [])
     text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
-    return text_outputs[-1] if text_outputs else "Data analysis process completed successfully."
+    return text_outputs[-1] if text_outputs else "=Feature engineering process completed successfully."
 
-director_tools = [cleaner_tool, analysis_tool]
+director_tools = [cleaner_tool, analysis_tool, feature_eng_tool]
 
 # ==========================================
 # ORCHESTRATOR DIRECTOR WORKFLOW CONTEXT
 # ==========================================
 
 director_prompt = (
-    "You are the Director of a Data Analytics team. You do not touch files or write code directly.\n"
-    "Your job is to coordinate your employees: the 'cleaner_tool' and the 'analysis_tool'.\n\n"
+    "You are the Director of an Advanced Data Analytics team. You coordinate the 'cleaner_tool', the 'data_engineering_tool', and the 'analysis_tool'.\n\n"
     "Your Workflow:\n"
-    "1. When a user gives you a file, ALWAYS send it to the cleaner tool first. You MUST explicitly state the file name to the cleaner.\n"
-    "2. Once the cleaner tool finishes cleaning, deploy the analysis tool. You MUST pass the EXACT file name AND the user's specific analytical question into the analysis tool's task description.\n"
-    "3. Review their work and present the ultimate final breakdown report back to the user with exact numbers."
-) 
+    "1. **STRICT SCOPE ADHERENCE**: You must evaluate the user's request and strictly pass it down to your workers without adding extra goals. "
+    "Instruct your workers to execute ONLY what was asked.\n"
+    "2. Send the file to 'cleaner_tool' first to resolve only the requested or structurally broken formatting issues.\n"
+    "3. Evaluate if the user explicitly asked for new features or columns. If YES, call 'data_engineering_tool'. If NO, bypass this tool completely.\n"
+    "4. Route the resulting active file context to the 'analysis_tool' to extract the targeted answers or graphs requested.\n"
+    "5. Present the exact findings back to the user cleanly. Do not summarize columns the user didn't ask about."
+)
+
 def message_sliding_window_hook(state: dict) -> dict:
     """
     Intercepts the state right before the LLM node processes it.
@@ -304,6 +371,7 @@ director_agent_fallback = create_react_agent(
     pre_model_hook=message_sliding_window_hook, 
     checkpointer=memory
 )
+
 
 pd.DataFrame({
     'Property_ID': [101, 102, 103, 104],
