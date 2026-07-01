@@ -1,86 +1,12 @@
-[
-    {
-        "Date":"2025-01-31",
-        "Category":"Electronics",
-        "Units_Sold":150.0,
-        "Revenue":15000,
-        "Region":"North"
-    },
-    {
-        "Date":"2025-02-28",
-        "Category":"Clothing",
-        "Units_Sold":320.0,
-        "Revenue":6400,
-        "Region":"East"
-    },
-    {
-        "Date":"2025-03-31",
-        "Category":"Home",
-        "Units_Sold":null,
-        "Revenue":8500,
-        "Region":"West"
-    },
-    {
-        "Date":"2025-04-30",
-        "Category":"Electronics",
-        "Units_Sold":180.0,
-        "Revenue":18000,
-        "Region":"South"
-    },
-    {
-        "Date":"2025-05-31",
-        "Category":"Clothing",
-        "Units_Sold":410.0,
-        "Revenue":8200,
-        "Region":"North"
-    },
-    {
-        "Date":"2025-06-30",
-        "Category":"Home",
-        "Units_Sold":290.0,
-        "Revenue":5800,
-        "Region":"East"
-    },
-    {
-        "Date":"2025-07-31",
-        "Category":"Electronics",
-        "Units_Sold":210.0,
-        "Revenue":21000,
-        "Region":"West"
-    },
-    {
-        "Date":"2025-08-31",
-        "Category":"Clothing",
-        "Units_Sold":null,
-        "Revenue":9100,
-        "Region":"South"
-    },
-    {
-        "Date":"2025-09-30",
-        "Category":"Home",
-        "Units_Sold":310.0,
-        "Revenue":6200,
-        "Region":"North"
-    },
-    {
-        "Date":"2025-10-31",
-        "Category":"Electronics",
-        "Units_Sold":250.0,
-        "Revenue":25000,
-        "Region":"East"
-    },
-    {
-        "Date":"2025-11-30",
-        "Category":"Clothing",
-        "Units_Sold":490.0,
-        "Revenue":9800,
-        "Region":"West"
-    },
-    {
-        "Date":"2025-12-31",
-        "Category":"Home",
-        "Units_Sold":350.0,
-        "Revenue":7100,
-        "Region":"South"
-    }
-]
+{"Date":1738281600000,"Category":"Electronics","Units_Sold":150,"Revenue":15000,"Region":"North"}
+{"Date":1740700800000,"Category":"Clothing","Units_Sold":320,"Revenue":6400,"Region":"East"}
+{"Date":1743379200000,"Category":"Home","Units_Sold":296,"Revenue":8500,"Region":"West"}
+{"Date":1745971200000,"Category":"Electronics","Units_Sold":180,"Revenue":18000,"Region":"South"}
+{"Date":1748649600000,"Category":"Clothing","Units_Sold":410,"Revenue":8200,"Region":"North"}
+{"Date":1751241600000,"Category":"Home","Units_Sold":290,"Revenue":5800,"Region":"East"}
+{"Date":1753920000000,"Category":"Electronics","Units_Sold":210,"Revenue":21000,"Region":"West"}
+{"Date":1756598400000,"Category":"Clothing","Units_Sold":296,"Revenue":9100,"Region":"South"}
+{"Date":1759190400000,"Category":"Home","Units_Sold":310,"Revenue":6200,"Region":"North"}
+{"Date":1761868800000,"Category":"Electronics","Units_Sold":250,"Revenue":25000,"Region":"East"}
+{"Date":1764460800000,"Category":"Clothing","Units_Sold":490,"Revenue":9800,"Region":"West"}
+{"Date":1767139200000,"Category":"Home","Units_Sold":350,"Revenue":7100,"Region":"South"}
