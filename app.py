@@ -34,11 +34,11 @@ with st.sidebar:
     source_mode = st.radio("Select Data Input Source Mode:", ["Choose Local Workspace File", "Upload New File Asset"])
     
     active_file_path = None
-    
+    SUPPORTED_EXTENSIONS = ('.csv', '.xlsx', '.json', '.parquet', '.xml', '.sql')
     if source_mode == "Choose Local Workspace File":
         # Scan folder directory and filter out structured data profiles extensions
-        supported_extensions = ('.csv', '.xlsx', '.json', '.parquet', '.xml', '.sql')
-        local_files = [f for f in os.listdir('.') if f.endswith(supported_extensions)]
+        
+        local_files = [f for f in os.listdir('.') if f.endswith(SUPPORTED_EXTENSIONS)]
         
         if local_files:
             selected_filename = st.selectbox("Select target active dataset file:", local_files)
@@ -182,3 +182,38 @@ with graphic_col:
         st.dataframe(log_df.tail(5), use_container_width=True)
     else:
         st.caption("Awaiting initial system telemetry transactions...")
+
+
+# ==========================================
+# 3. LIVE INTERACTIVE DATA VIEWER CANVAS
+# ==========================================
+st.markdown("---")
+st.subheader("🔎 Live Workspace File Inspector")
+
+# Explicitly rescanning local environment variables on user click to spot new creations instantly
+all_current_files = [f for f in os.listdir('.') if f.endswith(SUPPORTED_EXTENSIONS)]
+
+if all_current_files:
+    view_target = st.selectbox("Select file to view in full:", all_current_files, key="workspace_dataframe_viewer")
+    
+    if view_target and os.path.exists(view_target):
+        try:
+            _, ext = os.path.splitext(view_target)
+            ext = ext.lower()
+            
+            if ext == '.csv':
+                full_display_df = pd.read_csv(view_target)
+            elif ext == '.xlsx':
+                full_display_df = pd.read_excel(view_target, engine='openpyxl')
+            elif ext == '.json':
+                full_display_df = pd.read_json(view_target)
+            else:
+                full_display_df = pd.read_parquet(view_target)
+                
+            st.write(f"Showing full interactive layout for `{view_target}` ({full_display_df.shape[0]} total rows):")
+            st.dataframe(full_display_df, use_container_width=True)
+            
+        except Exception as read_error:
+            st.error(f"Could not render full dataset preview display metrics: {str(read_error)}")
+else:
+    st.info("No data files currently exist in the active workspace environment folder root.")

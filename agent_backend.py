@@ -16,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools import DuckDuckGoSearchRun
 
 
 from langchain_core.tools import tool
@@ -220,22 +221,26 @@ memory = InMemorySaver()
 llm = ChatOpenAI(model= model_name, temperature=0)
 
 cleaner_sys_prompt = (
-    "You are a specialized Data Cleaning Agent. Your only task is to fix data files using code.\n\n"
-    "CRUCIAL INSTRUCTIONS:\n"
+    "You are a specialized Data Cleaning Worker. Your only task is to fix data files using code.\n\n"
+    "STRICT EXECUTION RULES:\n"
     "1. Read the file path using 'file_reader'.\n"
-    "2. Write code with 'code_executor' to fix text patterns in columns (e.g. strip '$', '₹', 'per sqft', commas).\n"
-    "3. Apply `.str.strip()` to categorical text strings to resolve whitespace formatting issues.\n"
-    "4. When your cleaning modifications run successfully via code execution, stop and summarize exactly what changes you applied. Do not loop endlessly."
+    "2. **CRUCIAL - STRICT COMPLIANCE**: You must ONLY execute the exact cleaning tasks explicitly requested in the user prompt. "
+    "Do NOT add extra cleaning steps, do NOT drop missing values, do NOT strip whitespace, and do NOT change casing UNLESS explicitly asked to do so.\n"
+    "3. Write and execute code with 'code_executor' to fix ONLY the targeted formatting issues.\n"
+    "4. IMMEDIATELY AFTER your precise code executes successfully, you MUST STOP. Do not call any more tools.\n"
+    "5. Respond with a short text message starting with 'CLEANING COMPLETE:' followed by a summary of what you did."
 )
 cleaner_agent = create_react_agent(model=llm, tools=tools, prompt=cleaner_sys_prompt, checkpointer=memory)
 
 analysis_sys_prompt = (
-    "You are an expert Data Analyst Agent. Your task is to calculate insights from clean files.\n\n"
-    "CRUCIAL INSTRUCTIONS:\n"
-    "1. Read the active file using 'file_reader'.\n"
-    "2. Run mathematical aggregations or groupby calculations via 'code_executor'.\n"
-    "3. EXPLICIT REQUIREMENT: You must print your specific mathematical results (e.g., use `print(highest_month)`) inside the python code so it captures in the terminal output.\n"
-    "4. Stop immediately after returning your final data observations. Explicitly include the exact names, values, and numbers in your final message."
+    "You are a specialized Data Analysis Worker. Your only task is to calculate insights from clean files.\n\n"
+    "STRICT EXECUTION RULES:\n"
+    "1. Read the file path using 'file_reader'.\n"
+    "2. **CRUCIAL - STRICT COMPLIANCE**: Calculate ONLY the explicit metrics, questions, or charts requested by the user. "
+    "Do NOT generate an entire statistical summary of the dataframe or unrelated groupby tables if the user only asked a single targeted question.\n"
+    "3. Run mathematical calculations or plots via 'code_executor' matching the user's request exactly.\n"
+    "4. IMMEDIATELY AFTER your code executes successfully, you MUST STOP.\n"
+    "5. Respond with a final text message starting with 'ANALYSIS COMPLETE:' followed by your precise findings."
 )
 
 
@@ -248,15 +253,13 @@ analysis_agent = create_react_agent(
 
 data_eng_sys_prompt = (
     "You are a specialized Data Engineering Agent with live access to the internet.\n\n"
-    "CRUCIAL FEATURE ENGINEERING & SEARCH INSTRUCTIONS:\n"
-    "1. Always start by calling 'file_reader' on the file path string provided by the Director.\n"
-    "2. LIVE RESEARCH STEP: If you need creative, advanced, or domain-specific ideas for new columns, you MUST call 'web_search_tool' "
-    "to lookup real-world trends, feature engineering formulas, or creative techniques relevant to the columns in the dataset.\n"
-    "3. MANDATORY ISOLATION RULE: You must NEVER overwrite or modify the original file or the original df variable.\n"
-    "4. Create an explicit copy of the dataframe in your Python code using .copy() (e.g., df_eng = df.copy()).\n"
-    "5. Use 'code_executor' to implement the creative features you discovered on the web (e.g., extracting seasonality, calculating economic indexes, interaction flags).\n"
-    "6. Save the final feature-engineered copy to a brand-new file named 'engineered_features.csv' via code execution.\n"
-    "7. Summarize the creative ideas you researched and implemented for the Director."
+    "STRICT EXECUTION RULES:\n"
+    "1. Read the file path using 'file_reader'.\n"
+    "2. **CRUCIAL - STRICT COMPLIANCE**: You must ONLY create new features, columns, or formulas if the user's prompt explicitly asks you to. "
+    "If the user did not ask for feature generation, simply return 'No engineering requested' and exit immediately without modifying anything.\n"
+    "3. If (and only if) requested, create an explicit copy of the dataframe using `.copy()` and use 'code_executor' to build the requested features.\n"
+    "4. If requested to be creative or find real-world trends, use the 'web_search_tool' to look up relevant formulas.\n"
+    "5. Save the final copy to 'engineered_features.csv' and stop immediately. Do not add unsolicited extra columns."
 )
 
 feature_eng_agent = create_react_agent(
@@ -278,9 +281,13 @@ def cleaner_tool(task_description: str, config: RunnableConfig):
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_cleaner"}}
     
     response = cleaner_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
-    messages = response.get('messages', [])
-    text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
-    return text_outputs[-1] if text_outputs else "Data cleaning process completed successfully."
+    
+    # Securely crawl backward through the messages to find the worker's true final textual response
+    for msg in reversed(response.get('messages', [])):
+        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            return str(msg.content)
+            
+    return "Data cleaning completed successfully on disk."
 
 @tool
 def analysis_tool(task_description: str, config: RunnableConfig):
@@ -292,9 +299,12 @@ def analysis_tool(task_description: str, config: RunnableConfig):
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_analyst"}}
     
     response = analysis_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
-    messages = response.get('messages', [])
-    text_outputs = [m.content for m in messages if isinstance(m, AIMessage) and m.content]
-    return text_outputs[-1] if text_outputs else "Data analysis process completed successfully."
+    # Securely crawl backward through the messages to find the worker's true final textual response
+    for msg in reversed(response.get('messages', [])):
+        if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+            return str(msg.content)
+            
+    return "Data analysis completed successfully on disk."
 
 @tool
 def feature_eng_tool(task_description: str, config: RunnableConfig):
@@ -318,11 +328,12 @@ director_tools = [cleaner_tool, analysis_tool, feature_eng_tool]
 director_prompt = (
     "You are the Director of an Advanced Data Analytics team. You coordinate the 'cleaner_tool', the 'data_engineering_tool', and the 'analysis_tool'.\n\n"
     "Your Workflow:\n"
-    "1. When a user hands you a file, ALWAYS send it to the 'cleaner_tool' first to guarantee formatting is fixed on disk.\n"
-    "2. If the user wants new, creative, or innovative metrics, pass the cleaned file name to the 'data_engineering_tool'. "
-    "Explicitly instruct it to use its web search capability to look up creative domain features online, apply them to a copy, and export 'engineered_features.csv'.\n"
-    "3. Route the resulting file context ('engineered_features.csv') to the 'analysis_tool' to extract your final insights or charts.\n"
-    "4. Present the creative ideas found on the web and the final mathematical reports cleanly back to the user."
+    "1. **STRICT SCOPE ADHERENCE**: You must evaluate the user's request and strictly pass it down to your workers without adding extra goals. "
+    "Instruct your workers to execute ONLY what was asked.\n"
+    "2. Send the file to 'cleaner_tool' first to resolve only the requested or structurally broken formatting issues.\n"
+    "3. Evaluate if the user explicitly asked for new features or columns. If YES, call 'data_engineering_tool'. If NO, bypass this tool completely.\n"
+    "4. Route the resulting active file context to the 'analysis_tool' to extract the targeted answers or graphs requested.\n"
+    "5. Present the exact findings back to the user cleanly. Do not summarize columns the user didn't ask about."
 )
 
 def message_sliding_window_hook(state: dict) -> dict:
