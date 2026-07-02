@@ -1,10 +1,9 @@
 import os
+import time
 import streamlit as st
 import pandas as pd
 from langchain_core.messages import HumanMessage, AIMessage
 
-
-# Pull operational variables from your background framework model file
 from agent_backend import (
     director_agent, 
     director_agent_fallback, 
@@ -14,67 +13,62 @@ from agent_backend import (
     CSV_LOG_FILE
 )
 
-st.set_page_config(layout="wide", page_title="AI Data Analytics Studio")
-st.title("💼 Multi-Agent Workspace with Dynamic Data Ingestion")
+st.set_page_config(layout="wide", page_title="AI Analytical Workbench")
+st.title("📊 Enterprise Multi-Agent Analytics Studio")
+st.caption("Director-Worker Hierarchical Architecture with Autoregressive Token Streaming")
 st.markdown("---")
 
-# Setup state persistence variables
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "failover_triggered" not in st.session_state:
     st.session_state.failover_triggered = False
 
+SUPPORTED_EXTENSIONS = ('.csv', '.json', '.parquet')
+
+local_files = [
+    f for f in os.listdir('.') 
+    if f.endswith(SUPPORTED_EXTENSIONS) and f != "agent_tokens_logs.csv" and not f.startswith("~")
+]
+
+def token_streamer(text_content: str, delay: float = 0.02):
+    """Yields chunks of text sequentially to simulate an autoregressive streaming effect."""
+    for word in text_content.split(" "):
+        yield word + " "
+        time.sleep(delay)
+
 # ==========================================
-# FILE INGESTION SIDEBAR CONTROL PANEL
+# STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL
 # ==========================================
 with st.sidebar:
     st.header("📂 Data Ingestion Controller")
-    
-    # Mode Toggle: Upload New vs Select Existing Local Dataset File
     source_mode = st.radio("Select Data Input Source Mode:", ["Choose Local Workspace File", "Upload New File Asset"])
-    
     active_file_path = None
-    SUPPORTED_EXTENSIONS = ('.csv', '.xlsx', '.json', '.parquet', '.xml', '.sql')
+    
     if source_mode == "Choose Local Workspace File":
-        # Scan folder directory and filter out structured data profiles extensions
-        
-        local_files = [f for f in os.listdir('.') if f.endswith(SUPPORTED_EXTENSIONS)]
-        
         if local_files:
-            selected_filename = st.selectbox("Select target active dataset file:", local_files)
+            if "workspace_dataframe_viewer" not in st.session_state:
+                st.session_state.workspace_dataframe_viewer = local_files[0]
+                
+            selected_filename = st.selectbox(
+                "Select target active dataset file:", 
+                local_files, 
+                key="sidebar_file_selector"
+            )
+            
+            st.session_state.workspace_dataframe_viewer = selected_filename
             active_file_path = selected_filename
             st.success(f"Selected Target: `{active_file_path}`")
         else:
             st.warning("No standard data frames detected inside local workspace directories.")
             
     else:
-        uploaded_file = st.file_uploader("Drag and drop your file here:", type=["csv", "xlsx", "json", "parquet", "xml"])
+        uploaded_file = st.file_uploader("Drag and drop your file here:", type=["csv", "json", "parquet"])
         if uploaded_file is not None:
-            # Secure write stream block to save asset to the execution directory root
             active_file_path = uploaded_file.name
             with open(active_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             st.success(f"Uploaded and staged: `{active_file_path}`")
-
-    # Display a mini preview of the selected data inside the sidebar panel
-    if active_file_path and os.path.exists(active_file_path):
-        st.markdown("---")
-        st.subheader("📊 Instant Spreadsheet Preview")
-        try:
-            _, ext = os.path.splitext(active_file_path)
-            if ext.lower() == '.csv':
-                preview_df = pd.read_csv(active_file_path, nrows=5)
-            elif ext.lower() == '.xlsx':
-                preview_df = pd.read_excel(active_file_path, engine='openpyxl', nrows=5)
-            elif ext.lower() == '.json':
-                preview_df = pd.read_json(active_file_path).head(5)
-            else:
-                preview_df = None
-                
-            if preview_df is not None:
-                st.dataframe(preview_df, use_container_width=True)
-        except Exception as preview_error:
-            st.caption(f"Preview rendering skipped: {str(preview_error)}")
+            st.session_state.workspace_dataframe_viewer = active_file_path
 
 # ==========================================
 # MAIN INTERFACE TWO COLUMN LAYOUT MATRIX
@@ -84,91 +78,104 @@ terminal_col, graphic_col = st.columns([1, 1])
 with terminal_col:
     st.subheader("Supervisor Console Interface")
     
-    # Render historical conversation logs
     for interaction in st.session_state.messages:
         with st.chat_message(interaction["role"]):
             st.markdown(interaction["content"])
 
-    # Human query text capture loop
-    # Open app.py, locate your chat input block, and replace it with this:
-
-if user_prompt := st.chat_input("Enter command parameters..."):
-    if not active_file_path:
-        st.warning("⚠️ Access Denied: Please select or upload a dataset file in the sidebar panel before executing instructions.")
-    else:
-        contextualized_prompt = f"Using the dataset file '{active_file_path}', please execute the following instruction: {user_prompt}"
-        
-        st.chat_message("user").write(user_prompt)
-        st.session_state.messages.append({"role": "user", "content": user_prompt})
-        
-        is_safe, error_message = validate_user_input(user_prompt, max_token_count=100)
-        
-        if not is_safe:
-            st.error(error_message)
-            st.session_state.messages.append({"role": "assistant", "content": f"Halted: {error_message}"})
+    if user_prompt := st.chat_input("Enter formatting, mathematical or visualization requests..."):
+        if not active_file_path:
+            st.warning("⚠️ Access Denied: Please select a file target in the sidebar first.")
         else:
-            with st.chat_message("assistant"):
-                status_loader = st.empty()
-                status_loader.info(f"Director is guiding tasks using target asset context: `{active_file_path}`...")
-                
-                # --- UPGRADE: Set a high recursion limit for our complex multi-agent framework ---
-                runtime_config = {
-                    "configurable": config["configurable"],
-                    "recursion_limit": 100  # Gives sub-agents plenty of room to pass steps
-                }
-                
-                try:
+            contextualized_prompt = f"Using the dataset file '{active_file_path}', please execute the following instruction: {user_prompt}"
+            
+            st.chat_message("user").write(user_prompt)
+            st.session_state.messages.append({"role": "user", "content": user_prompt})
+            
+            is_safe, error_message = validate_user_input(user_prompt, max_token_count=100)
+            
+            if not is_safe:
+                st.error(error_message)
+                st.session_state.messages.append({"role": "assistant", "content": f"Blocked: {error_message}"})
+            else:
+                with st.chat_message("assistant"):
+                    trace_container = st.container()
+                    with trace_container:
+                        status_loader = st.empty()
+                        status_loader.markdown("⏳ **System Initializing...** Assembling multi-agent execution graphs...")
+                    
+                    runtime_config = {
+                        "configurable": config["configurable"],
+                        "recursion_limit": 100  
+                    }
+                    
                     payload = {"messages": [HumanMessage(content=contextualized_prompt)]}
+                    last_seen_message = None
                     
-                    # Run the normal agent with the high step limit
-                    if st.session_state.failover_triggered:
-                        execution_output = director_agent_fallback.invoke(payload, config=runtime_config)
-                    else:
-                        execution_output = director_agent.invoke(payload, config=runtime_config)
-                    
-                    final_reply = execution_output["messages"][-1]
-                    status_loader.empty()
-                    st.markdown(final_reply.content)
-                    st.session_state.messages.append({"role": "assistant", "content": final_reply.content})
-                    
-                    if isinstance(final_reply, AIMessage):
-                        log_tokens(final_reply)
+                    try:
+                        selected_agent = director_agent_fallback if st.session_state.failover_triggered else director_agent
                         
-                except Exception as api_outage:
-                    # --- UPGRADE: Clean failover execution path without recursive catch loops ---
-                    status_loader.warning(f"Primary engine encountered an error: {str(api_outage)}. Deploying premium fallback model routing...")
-                    
-                    if not st.session_state.failover_triggered:
-                        st.session_state.failover_triggered = True
-                        try:
-                            # Run fallback agent with the proper steps configuration
-                            execution_output = director_agent_fallback.invoke(payload, config=runtime_config)
-                            final_reply = execution_output["messages"][-1]
-                            status_loader.empty()
-                            st.markdown(final_reply.content)
-                            st.session_state.messages.append({"role": "assistant", "content": final_reply.content})
-                            
-                            if isinstance(final_reply, AIMessage):
-                                log_tokens(final_reply)
-                        except Exception as fallback_error:
-                            status_loader.empty()
-                            error_details = f"Both primary and fallback engines failed to parse this instruction. Error trace: {str(fallback_error)}"
-                            st.error(error_details)
-                            st.session_state.messages.append({"role": "assistant", "content": error_details})
-                    else:
+                        for chunk in selected_agent.stream(payload, config=runtime_config, stream_mode="updates"):
+                            for node_name, node_update in chunk.items():
+                                if "messages" in node_update:
+                                    last_msg = node_update["messages"][-1]
+                                    
+                                    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                                        for tcall in last_msg.tool_calls:
+                                            status_loader.markdown(f"⚙️ **Director Action**: Activating module `{tcall['name']}`...")
+                                    elif node_name == "tools":
+                                        status_loader.markdown("🔄 **Tool Sync**: Committing changes back onto disk targets...")
+                                    else:
+                                        status_loader.markdown(f"🧠 **Thinking States**: Processing tokens inside node: `{node_name}`...")
+                        
                         status_loader.empty()
-                        error_details = f"System recovery failed. Underlying structural exception: {str(api_outage)}"
-                        st.error(error_details)
-                        st.session_state.messages.append({"role": "assistant", "content": error_details})
                         
-            st.rerun()
+                        final_state = selected_agent.get_state(runtime_config)
+                        if final_state.values and "messages" in final_state.values:
+                            last_seen_message = final_state.values["messages"][-1]
+                        
+                        if last_seen_message and last_seen_message.content:
+                            final_text = str(last_seen_message.content).strip()
+                            if not final_text or final_text.startswith("{"):
+                                final_text = "Process completed successfully. Review modifications inside the Live Workspace File Inspector below."
+                                
+                            streamed_response = st.write_stream(token_streamer(final_text, delay=0.02))
+                            st.session_state.messages.append({"role": "assistant", "content": streamed_response})
+                            if isinstance(last_seen_message, AIMessage):
+                                log_tokens(last_seen_message)
+                                
+                    except Exception as api_outage:
+                        status_loader.warning(f"🔧 Primary exception: {str(api_outage)}. Running failover cluster...")
+                        st.session_state.failover_triggered = True
+                        
+                        try:
+                            for chunk in director_agent_fallback.stream(payload, config=runtime_config, stream_mode="updates"):
+                                for node_name, node_update in chunk.items():
+                                    if "messages" in node_update:
+                                        last_msg = node_update["messages"][-1]
+                            
+                            status_loader.empty()
+                            final_state = director_agent_fallback.get_state(runtime_config)
+                            if final_state.values and "messages" in final_state.values:
+                                last_seen_message = final_state.values["messages"][-1]
+                                
+                            if last_seen_message and last_seen_message.content:
+                                final_text = str(last_seen_message.content).strip()
+                                streamed_response = st.write_stream(token_streamer(final_text, delay=0.02))
+                                st.session_state.messages.append({"role": "assistant", "content": streamed_response})
+                                if isinstance(last_seen_message, AIMessage):
+                                    log_tokens(last_seen_message)
+                        except Exception as fatal_err:
+                            status_loader.empty()
+                            st.error(f"Execution Error: {str(fatal_err)}")
+                            st.session_state.messages.append({"role": "assistant", "content": str(fatal_err)})
+                            
+                st.rerun()
 
 with graphic_col:
     st.subheader("Data Visualization Display Output")
-    
     if os.path.exists("data_analyzer.png"):
-        st.image("data_analyzer.png", use_container_width=True, caption="Pipeline Chart Output Canvas Container")
-        if st.button("Flush Visual Assets Cache"):
+        st.image("data_analyzer.png", use_container_width=True, caption="Pipeline Chart Output Canvas")
+        if st.button("Flush Visual Workspace Output Matrix Cache"):
             os.remove("data_analyzer.png")
             st.rerun()
     else:
@@ -176,13 +183,9 @@ with graphic_col:
         
     st.markdown("---")
     st.subheader("Telemetry Log Audit Ledger (CSV Overview)")
-    
     if os.path.exists(CSV_LOG_FILE):
         log_df = pd.read_csv(CSV_LOG_FILE)
-        st.dataframe(log_df.tail(5), use_container_width=True)
-    else:
-        st.caption("Awaiting initial system telemetry transactions...")
-
+        st.dataframe(log_df.tail(3), use_container_width=True)
 
 # ==========================================
 # 3. LIVE INTERACTIVE DATA VIEWER CANVAS
@@ -190,30 +193,31 @@ with graphic_col:
 st.markdown("---")
 st.subheader("🔎 Live Workspace File Inspector")
 
-# Explicitly rescanning local environment variables on user click to spot new creations instantly
-all_current_files = [f for f in os.listdir('.') if f.endswith(SUPPORTED_EXTENSIONS)]
+all_current_files = [
+    f for f in os.listdir('.') 
+    if f.endswith(SUPPORTED_EXTENSIONS) and f != "agent_tokens_logs.csv" and not f.startswith("~")
+]
 
 if all_current_files:
-    view_target = st.selectbox("Select file to view in full:", all_current_files, key="workspace_dataframe_viewer")
+    view_target = st.selectbox(
+        "Select file to view in full:", 
+        all_current_files, 
+        key="workspace_dataframe_viewer"
+    )
     
     if view_target and os.path.exists(view_target):
         try:
             _, ext = os.path.splitext(view_target)
             ext = ext.lower()
             
-            if ext == '.csv':
-                full_display_df = pd.read_csv(view_target)
-            elif ext == '.xlsx':
-                full_display_df = pd.read_excel(view_target, engine='openpyxl')
-            elif ext == '.json':
-                full_display_df = pd.read_json(view_target)
-            else:
-                full_display_df = pd.read_parquet(view_target)
+            if ext == '.csv': full_display_df = pd.read_csv(view_target)
+            elif ext == '.json': full_display_df = pd.read_json(view_target)
+            else: full_display_df = pd.read_parquet(view_target)
                 
             st.write(f"Showing full interactive layout for `{view_target}` ({full_display_df.shape[0]} total rows):")
             st.dataframe(full_display_df, use_container_width=True)
             
         except Exception as read_error:
-            st.error(f"Could not render full dataset preview display metrics: {str(read_error)}")
+            st.error(f"Could not render full dataset preview: {str(read_error)}")
 else:
     st.info("No data files currently exist in the active workspace environment folder root.")
