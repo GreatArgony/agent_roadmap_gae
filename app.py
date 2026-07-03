@@ -15,13 +15,35 @@ from agent_backend import (
 
 st.set_page_config(layout="wide", page_title="AI Analytical Workbench")
 st.title("📊 Enterprise Multi-Agent Analytics Studio")
-st.caption("Director-Worker Hierarchical Architecture with Autoregressive Token Streaming")
+st.caption("Hierarchical Architecture with Live Tool Tracing & Sticky Visual Canvas")
 st.markdown("---")
+
+# ==========================================
+# CUSTOM PERSISTENT VIEWPORTS STICKY CSS
+# ==========================================
+st.markdown(
+    """
+    <style>
+        /* Forces the right-hand column display block to freeze vertically */
+        [data-testid="stColumn"]:nth-child(2) {
+            position: -webkit-sticky;
+            position: sticky;
+            top: 2rem;
+            height: calc(100vh - 4rem);
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "failover_triggered" not in st.session_state:
     st.session_state.failover_triggered = False
+if "chart_updated_this_turn" not in st.session_state:
+    st.session_state.chart_updated_this_turn = False
 
 SUPPORTED_EXTENSIONS = ('.csv', '.json', '.parquet')
 
@@ -97,6 +119,11 @@ with terminal_col:
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": f"Blocked: {error_message}"})
             else:
+                # Reset chart trigger state flags right before the agents run
+                st.session_state.chart_updated_this_turn = False
+                # Capture the original timestamp of the chart file if it exists
+                old_img_time = os.path.getmtime("data_analyzer.png") if os.path.exists("data_analyzer.png") else 0
+                
                 with st.chat_message("assistant"):
                     trace_container = st.container()
                     with trace_container:
@@ -138,6 +165,11 @@ with terminal_col:
                             if not final_text or final_text.startswith("{"):
                                 final_text = "Process completed successfully. Review modifications inside the Live Workspace File Inspector below."
                                 
+                            # Check if code execution modified or regenerated the chart file during this transaction turn
+                            new_img_time = os.path.getmtime("data_analyzer.png") if os.path.exists("data_analyzer.png") else 0
+                            if new_img_time > old_img_time:
+                                st.session_state.chart_updated_this_turn = True
+                                
                             streamed_response = st.write_stream(token_streamer(final_text, delay=0.02))
                             st.session_state.messages.append({"role": "assistant", "content": streamed_response})
                             if isinstance(last_seen_message, AIMessage):
@@ -160,6 +192,11 @@ with terminal_col:
                                 
                             if last_seen_message and last_seen_message.content:
                                 final_text = str(last_seen_message.content).strip()
+                                
+                                new_img_time = os.path.getmtime("data_analyzer.png") if os.path.exists("data_analyzer.png") else 0
+                                if new_img_time > old_img_time:
+                                    st.session_state.chart_updated_this_turn = True
+                                    
                                 streamed_response = st.write_stream(token_streamer(final_text, delay=0.02))
                                 st.session_state.messages.append({"role": "assistant", "content": streamed_response})
                                 if isinstance(last_seen_message, AIMessage):
@@ -171,53 +208,61 @@ with terminal_col:
                             
                 st.rerun()
 
+# ==========================================
+# STICKY GRAPHIC CANVAS & PERSISTENT VIEWER
+# ==========================================
 with graphic_col:
+    st.subheader("🔎 Live Workspace File Inspector")
+    
+    all_current_files = [
+        f for f in os.listdir('.') 
+        if f.endswith(SUPPORTED_EXTENSIONS) and f != "agent_tokens_logs.csv" and not f.startswith("~")
+    ]
+
+    if all_current_files:
+        view_target = st.selectbox(
+            "Select file to view in full:", 
+            all_current_files, 
+            key="workspace_dataframe_viewer"
+        )
+        
+        if view_target and os.path.exists(view_target):
+            try:
+                _, ext = os.path.splitext(view_target)
+                ext = ext.lower()
+                
+                if ext == '.csv': full_display_df = pd.read_csv(view_target)
+                elif ext == '.json': full_display_df = pd.read_json(view_target)
+                else: full_display_df = pd.read_parquet(view_target)
+                    
+                st.write(f"Showing active framework array layout for `{view_target}`:")
+                st.dataframe(full_display_df, use_container_width=True)
+                
+            except Exception as read_error:
+                st.error(f"Could not render layout: {str(read_error)}")
+    else:
+        st.info("No structured metrics files currently located inside local root data matrices.")
+
+    st.markdown("---")
     st.subheader("Data Visualization Display Output")
-    if os.path.exists("data_analyzer.png"):
+    
+    # Render loop rule: ONLY display if image exists AND was fresh created/modified during this query turn
+    if os.path.exists("data_analyzer.png") and st.session_state.chart_updated_this_turn:
         st.image("data_analyzer.png", use_container_width=True, caption="Pipeline Chart Output Canvas")
-        if st.button("Flush Visual Workspace Output Matrix Cache"):
+        if st.button("Flush Active Plot Matrix Cache Window"):
             os.remove("data_analyzer.png")
+            st.session_state.chart_updated_this_turn = False
             st.rerun()
     else:
-        st.info("Awaiting structural chart generation operations on current transaction execution streams.")
-        
-    st.markdown("---")
-    st.subheader("Telemetry Log Audit Ledger (CSV Overview)")
-    if os.path.exists(CSV_LOG_FILE):
-        log_df = pd.read_csv(CSV_LOG_FILE)
-        st.dataframe(log_df.tail(3), use_container_width=True)
+        st.info("Awaiting structural chart generation operations on current prompt stream parameters.")
 
 # ==========================================
-# 3. LIVE INTERACTIVE DATA VIEWER CANVAS
+# METRICS AUDIT LEDGER FOOTER
 # ==========================================
 st.markdown("---")
-st.subheader("🔎 Live Workspace File Inspector")
-
-all_current_files = [
-    f for f in os.listdir('.') 
-    if f.endswith(SUPPORTED_EXTENSIONS) and f != "agent_tokens_logs.csv" and not f.startswith("~")
-]
-
-if all_current_files:
-    view_target = st.selectbox(
-        "Select file to view in full:", 
-        all_current_files, 
-        key="workspace_dataframe_viewer"
-    )
-    
-    if view_target and os.path.exists(view_target):
-        try:
-            _, ext = os.path.splitext(view_target)
-            ext = ext.lower()
-            
-            if ext == '.csv': full_display_df = pd.read_csv(view_target)
-            elif ext == '.json': full_display_df = pd.read_json(view_target)
-            else: full_display_df = pd.read_parquet(view_target)
-                
-            st.write(f"Showing full interactive layout for `{view_target}` ({full_display_df.shape[0]} total rows):")
-            st.dataframe(full_display_df, use_container_width=True)
-            
-        except Exception as read_error:
-            st.error(f"Could not render full dataset preview: {str(read_error)}")
+st.subheader("Telemetry Log Audit Ledger (CSV Overview)")
+if os.path.exists(CSV_LOG_FILE):
+    log_df = pd.read_csv(CSV_LOG_FILE)
+    st.dataframe(log_df.tail(4), use_container_width=True)
 else:
-    st.info("No data files currently exist in the active workspace environment folder root.")
+    st.caption("Awaiting system runtime generation streams...")
