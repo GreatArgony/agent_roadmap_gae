@@ -61,6 +61,9 @@ def token_streamer(text_content: str, delay: float = 0.02):
 # ==========================================
 # STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL
 # ==========================================
+# ==========================================================
+# REPAIRED STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL (app.py)
+# ==========================================================
 with st.sidebar:
     st.header("📂 Data Ingestion Controller")
     source_mode = st.radio("Select Data Input Source Mode:", ["Choose Local Workspace File", "Upload New File Asset"])
@@ -68,6 +71,10 @@ with st.sidebar:
     
     if source_mode == "Choose Local Workspace File":
         if local_files:
+            # PREVENT LOCK: If the sidebar selector shifts, instantly overwrite the inspector key
+            if "sidebar_file_selector" in st.session_state:
+                st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
+
             if "workspace_dataframe_viewer" not in st.session_state:
                 st.session_state.workspace_dataframe_viewer = local_files[0]
                 
@@ -77,6 +84,7 @@ with st.sidebar:
                 key="sidebar_file_selector"
             )
             
+            # FORCE RE-ALIGNMENT: Explicitly bind the state variables together
             st.session_state.workspace_dataframe_viewer = selected_filename
             active_file_path = selected_filename
             st.success(f"Selected Target: `{active_file_path}`")
@@ -90,8 +98,8 @@ with st.sidebar:
             with open(active_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             st.success(f"Uploaded and staged: `{active_file_path}`")
+            # Automatically push new file selections to the global layout variables
             st.session_state.workspace_dataframe_viewer = active_file_path
-
 # ==========================================
 # MAIN INTERFACE TWO COLUMN LAYOUT MATRIX
 # ==========================================

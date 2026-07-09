@@ -194,11 +194,12 @@ analysis_sys_prompt = (
     "You are a specialized Data Analysis Worker. Your task is to calculate insights or generate plots from clean files.\n\n"
     "STRICT EXECUTION RULES:\n"
     "1. Read the file path using 'file_reader'.\n"
-    "2. ZERO-HALLUCINATION RULE: Write Python code to calculate answers or draw plots, and run it via 'code_executor'.\n"
-    "3. **VISUALIZATION MANDATE**: If the request asks for a plot, chart, or graph, your Python code MUST save the figure as 'data_analyzer.png' using `plt.savefig('data_analyzer.png', bbox_inches='tight')`. Clear the figure afterward using `plt.close()`.\n"
-    "4. Calculate ONLY the explicit metrics or charts requested. Do NOT generate extra summaries.\n"
-    "5. IMMEDIATELY AFTER your code executes, you MUST STOP.\n"
-    "6. Respond with a final text message starting with 'ANALYSIS COMPLETE:' summarizing the mathematical results or confirming that the plot was saved as 'data_analyzer.png'."
+    "2. ZERO-HALLUCINATION RULE: Write Python code to calculate answers, explicitly use `print()` to output the text result, and run it via 'code_executor'.\n"
+    "3. **VISUALIZATION RULE**: If the request asks for a plot, chart, or graph, your Python code must save the figure as 'data_analyzer.png' using `plt.savefig('data_analyzer.png', bbox_inches='tight')` and clear the figure with `plt.close()`.\n"
+    "4. **MANDATORY TEXT RETURN RULE**: Even if you generate a chart/plot, you are STRICTLY REQUIRED to calculate and textually state the exact numbers, months, names, and values in your final response text. Never just say 'refer to the image'.\n"
+    "5. Calculate ONLY the explicit metrics or charts requested. Do NOT generate extra summaries.\n"
+    "6. IMMEDIATELY AFTER your code executes and prints the numerical results, you MUST STOP.\n"
+    "7. Respond with a final text message starting with 'ANALYSIS COMPLETE:' followed explicitly by your text findings and values extracted from the code execution."
 )
 analysis_agent = create_react_agent(model=llm, tools=tools, prompt=analysis_sys_prompt, checkpointer=memory)
 
@@ -223,6 +224,10 @@ def cleaner_tool(task_description: str, config: RunnableConfig):
     parent_thread = config["configurable"].get("thread_id", "default_thread")
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_cleaner"}}
     
+    notebook_env.clear()
+    globals().pop('df', None)
+
+
     response = cleaner_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
     messages = response.get('messages', [])
     
@@ -241,6 +246,9 @@ def analysis_tool(task_description: str, config: RunnableConfig):
     parent_thread = config["configurable"].get("thread_id", "default_thread")
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_analyst"}}
     
+    notebook_env.clear()
+    globals().pop('df', None)
+
     response = analysis_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
     messages = response.get('messages', [])
     
@@ -258,6 +266,9 @@ def data_engineering_tool(task_description: str, config: RunnableConfig):
     """Use this tool to research real-world ideas online and generate new creative columns or mathematical features."""
     parent_thread = config["configurable"].get("thread_id", "default_thread")
     sub_config = {"configurable": {"thread_id": f"{parent_thread}_data_eng"}}
+    
+    notebook_env.clear()
+    globals().pop('df', None)
     
     response = data_eng_agent.invoke({'messages': [('user', task_description)]}, config=sub_config)
     messages = response.get('messages', [])
@@ -279,6 +290,10 @@ director_tools = [cleaner_tool, analysis_tool, data_engineering_tool]
 
 director_prompt = (
     "You are the Director of an Advanced Data Analytics team. You coordinate the 'cleaner_tool', the 'data_engineering_tool', and the 'analysis_tool'.\n\n"
+    "CRUCIAL OUTPUT RULES:\n"
+    "1. **NEVER PROVIDE VAGUE STATUS UPDATES**: You are strictly forbidden from saying things like 'The month has been identified', 'The analysis is complete', or 'The numbers have been determined'.\n"
+    "2. **VERBATIM MANDATE**: Your sole job is to take the exact text, numbers, calculations, and answers returned by the 'analysis_tool' or 'cleaner_tool' and present them directly and fully to the user.\n"
+    "3. If a tool returns a specific month and value, you MUST say that exact month and value in your final response to the user.\n\n"
     "Your Workflow:\n"
     "1. Read the user's prompt and extract the active dataset filename.\n"
     "2. MANDATORY: When delegating tasks to your worker tools, you MUST explicitly include the target file path name at the beginning of the task instruction.\n"
@@ -288,40 +303,22 @@ director_prompt = (
     "6. Do not fabricate numbers. Print only the exact answers returned by the tool executions."
 )
 
-def message_sliding_window_hook(state: dict) -> dict:
-    """Intercepts state to keep foundational system prompt and recent context, safely preserving the original file target message."""
-    messages = state["messages"]
-    non_system_messages = [m for m in messages if not isinstance(m, SystemMessage)]
-    
-    if len(non_system_messages) > 5:
-        trimmed_history = [non_system_messages[0]] + non_system_messages[-4:]
-    else:
-        trimmed_history = non_system_messages
-        
-    new_messages = [SystemMessage(content=director_prompt)] + trimmed_history
-    return {"messages": new_messages}
-
 config = {"configurable": {"thread_id": "notebook_session_1"}}
 
+# FIXED: Removed pre_model_hook loop and passed prompt cleanly into core initialization
 director_agent = create_react_agent(
     model=llm,
     tools=director_tools,
-    pre_model_hook=message_sliding_window_hook,
+    prompt=director_prompt,
     checkpointer=memory,
 )
 
 director_agent_fallback = create_react_agent(
     model=ChatOpenAI(model=fallback_model_name, temperature=0), 
     tools=director_tools, 
-    pre_model_hook=message_sliding_window_hook, 
+    prompt=director_prompt, 
     checkpointer=memory
 )
 
-pd.DataFrame({
-    'Property_ID': [101, 102, 103, 104],
-    'Location': ['Mumbai ', ' Delhi', 'Bangalore', 'Mumbai'],
-    'price_per_sqft': ['₹3,392 per sqft', '₹4,150 / sqft', '₹2,990 per sqft', np.nan]
-}).to_csv('messy_housing_performance.csv', index=False)
-
 if __name__ == "__main__":
-    print("Running backend standalone test...")
+    print("Backend initialization complete.")
