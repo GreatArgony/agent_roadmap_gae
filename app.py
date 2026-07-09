@@ -58,6 +58,10 @@ def token_streamer(text_content: str, delay: float = 0.02):
         yield word + " "
         time.sleep(delay)
 
+def sync_inspector_to_sidebar():
+    # runs when the sidebar dropdown itself changes
+    st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
+
 # ==========================================
 # STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL
 # ==========================================
@@ -72,8 +76,8 @@ with st.sidebar:
     if source_mode == "Choose Local Workspace File":
         if local_files:
             # PREVENT LOCK: If the sidebar selector shifts, instantly overwrite the inspector key
-            if "sidebar_file_selector" in st.session_state:
-                st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
+            # if "sidebar_file_selector" in st.session_state:
+            #     st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
 
             if "workspace_dataframe_viewer" not in st.session_state:
                 st.session_state.workspace_dataframe_viewer = local_files[0]
@@ -81,12 +85,13 @@ with st.sidebar:
             selected_filename = st.selectbox(
                 "Select target active dataset file:", 
                 local_files, 
-                key="sidebar_file_selector"
+                key="sidebar_file_selector",
+                on_change= sync_inspector_to_sidebar
             )
-            
+            active_file_path = st.session_state.sidebar_file_selector
             # FORCE RE-ALIGNMENT: Explicitly bind the state variables together
-            st.session_state.workspace_dataframe_viewer = selected_filename
-            active_file_path = selected_filename
+            #st.session_state.workspace_dataframe_viewer = selected_filename
+            # active_file_path = selected_filename
             st.success(f"Selected Target: `{active_file_path}`")
         else:
             st.warning("No standard data frames detected inside local workspace directories.")
@@ -233,7 +238,7 @@ with graphic_col:
             all_current_files, 
             key="workspace_dataframe_viewer"
         )
-        
+        st.write(view_target)
         if view_target and os.path.exists(view_target):
             try:
                 _, ext = os.path.splitext(view_target)
