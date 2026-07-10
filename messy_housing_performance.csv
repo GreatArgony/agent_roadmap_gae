@@ -1,5 +1,5 @@
 Property_ID,Location,price_per_sqft
-101,Mumbai ,"₹3,392 per sqft"
-102, Delhi,"₹4,150 / sqft"
-103,Bangalore,"₹2,990 per sqft"
-104,Mumbai,
+101,Mumbai ,3392
+102, Delhi,4150
+103,Bangalore,2990
+104,Mumbai,0

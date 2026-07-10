@@ -1,0 +1,13 @@
+Date,Category,Units_Sold,Revenue,Region
+2025-01-31,Electronics,150,15000,North
+2025-02-28,Clothing,320,6400,East
+2025-03-31,Home,296,8500,West
+2025-04-30,Electronics,180,18000,South
+2025-05-31,Clothing,410,8200,North
+2025-06-30,Home,290,5800,East
+2025-07-31,Electronics,210,21000,West
+2025-08-31,Clothing,296,9100,South
+2025-09-30,Home,310,6200,North
+2025-10-31,Electronics,250,25000,East
+2025-11-30,Clothing,490,9800,West
+2025-12-31,Home,350,7100,South

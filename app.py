@@ -44,6 +44,8 @@ if "failover_triggered" not in st.session_state:
     st.session_state.failover_triggered = False
 if "chart_updated_this_turn" not in st.session_state:
     st.session_state.chart_updated_this_turn = False
+if "workspace_dataframe_viewer" not in st.session_state:
+    st.session_state.workspace_dataframe_viewer = None
 
 SUPPORTED_EXTENSIONS = ('.csv', '.json', '.parquet')
 
@@ -59,15 +61,12 @@ def token_streamer(text_content: str, delay: float = 0.02):
         time.sleep(delay)
 
 def sync_inspector_to_sidebar():
-    # runs when the sidebar dropdown itself changes
+    """Runs when the sidebar dropdown changes, forcing the main inspector to point to the same target."""
     st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
 
 # ==========================================
 # STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL
 # ==========================================
-# ==========================================================
-# REPAIRED STATE-SYNCHRONIZED SIDEBAR CONTROL PANEL (app.py)
-# ==========================================================
 with st.sidebar:
     st.header("📂 Data Ingestion Controller")
     source_mode = st.radio("Select Data Input Source Mode:", ["Choose Local Workspace File", "Upload New File Asset"])
@@ -75,23 +74,20 @@ with st.sidebar:
     
     if source_mode == "Choose Local Workspace File":
         if local_files:
-            # PREVENT LOCK: If the sidebar selector shifts, instantly overwrite the inspector key
-            # if "sidebar_file_selector" in st.session_state:
-            #     st.session_state.workspace_dataframe_viewer = st.session_state.sidebar_file_selector
-
-            if "workspace_dataframe_viewer" not in st.session_state:
+            if st.session_state.workspace_dataframe_viewer not in local_files:
                 st.session_state.workspace_dataframe_viewer = local_files[0]
                 
+            # Find current index for sidebar alignment
+            sidebar_index = local_files.index(st.session_state.workspace_dataframe_viewer)
+
             selected_filename = st.selectbox(
                 "Select target active dataset file:", 
                 local_files, 
+                index=sidebar_index,
                 key="sidebar_file_selector",
-                on_change= sync_inspector_to_sidebar
+                on_change=sync_inspector_to_sidebar
             )
             active_file_path = st.session_state.sidebar_file_selector
-            # FORCE RE-ALIGNMENT: Explicitly bind the state variables together
-            #st.session_state.workspace_dataframe_viewer = selected_filename
-            # active_file_path = selected_filename
             st.success(f"Selected Target: `{active_file_path}`")
         else:
             st.warning("No standard data frames detected inside local workspace directories.")
@@ -103,8 +99,8 @@ with st.sidebar:
             with open(active_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             st.success(f"Uploaded and staged: `{active_file_path}`")
-            # Automatically push new file selections to the global layout variables
             st.session_state.workspace_dataframe_viewer = active_file_path
+
 # ==========================================
 # MAIN INTERFACE TWO COLUMN LAYOUT MATRIX
 # ==========================================
@@ -132,9 +128,7 @@ with terminal_col:
                 st.error(error_message)
                 st.session_state.messages.append({"role": "assistant", "content": f"Blocked: {error_message}"})
             else:
-                # Reset chart trigger state flags right before the agents run
                 st.session_state.chart_updated_this_turn = False
-                # Capture the original timestamp of the chart file if it exists
                 old_img_time = os.path.getmtime("data_analyzer.png") if os.path.exists("data_analyzer.png") else 0
                 
                 with st.chat_message("assistant"):
@@ -178,7 +172,6 @@ with terminal_col:
                             if not final_text or final_text.startswith("{"):
                                 final_text = "Process completed successfully. Review modifications inside the Live Workspace File Inspector below."
                                 
-                            # Check if code execution modified or regenerated the chart file during this transaction turn
                             new_img_time = os.path.getmtime("data_analyzer.png") if os.path.exists("data_analyzer.png") else 0
                             if new_img_time > old_img_time:
                                 st.session_state.chart_updated_this_turn = True
@@ -233,12 +226,23 @@ with graphic_col:
     ]
 
     if all_current_files:
+        # Fallback initialization for the inspector preview window state
+        if st.session_state.workspace_dataframe_viewer not in all_current_files:
+            st.session_state.workspace_dataframe_viewer = all_current_files[0]
+            
+        # Look up the current position to preserve layout choice across page redraw tokens
+        inspector_index = all_current_files.index(st.session_state.workspace_dataframe_viewer)
+
+        # FIXED: Decoupled widget state key from tracking token using custom callback sync parameters
         view_target = st.selectbox(
             "Select file to view in full:", 
-            all_current_files, 
-            key="workspace_dataframe_viewer"
+            all_current_files,
+            index=inspector_index,
+            key="inspector_dropdown_widget"
         )
-        st.write(view_target)
+        # Commit chosen variant to memory track
+        st.session_state.workspace_dataframe_viewer = view_target
+        
         if view_target and os.path.exists(view_target):
             try:
                 _, ext = os.path.splitext(view_target)
@@ -259,7 +263,6 @@ with graphic_col:
     st.markdown("---")
     st.subheader("Data Visualization Display Output")
     
-    # Render loop rule: ONLY display if image exists AND was fresh created/modified during this query turn
     if os.path.exists("data_analyzer.png") and st.session_state.chart_updated_this_turn:
         st.image("data_analyzer.png", use_container_width=True, caption="Pipeline Chart Output Canvas")
         if st.button("Flush Active Plot Matrix Cache Window"):
